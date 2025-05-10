@@ -1,0 +1,346 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Star Dash - Jeu Viral</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a2e;
+            color: white;
+        }
+        canvas {
+            border: 2px solid #fff;
+            background-color: #0f0f23;
+        }
+        #ui {
+            margin-top: 10px;
+            text-align: center;
+        }
+        #shareButton {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ffcc00;
+            color: black;
+            border: none;
+            border-radius: 5px;
+        }
+        #shareButton:hover {
+            background-color: #e6b800;
+        }
+        #gameOver {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            text-align: center;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <div id="ui">
+        <p>Score: <span id="score">0</span></p>
+        <button id="shareButton" onclick="shareScore()">Partager mon score</button>
+    </div>
+    <div id="gameOver">
+        <h2>Game Over !</h2>
+        <p>Votre score: <span id="finalScore">0</span></p>
+        <button onclick="restartGame()">Rejouer</button>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Variables du jeu
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 10,
+            speed: 5
+        };
+        let obstacles = [];
+        let bonuses = [];
+        let particles = [];
+        let score = 0;
+        let gameOver = false;
+        let lastObstacleSpawn = 0;
+        let obstacleSpawnDelay = 1000; // Début à 1 seconde
+        const minSpawnDelay = 300; // Minimum à 0.3 seconde
+        const spawnDelayDecrease = 10; // Réduction par frame
+
+        // Créer un obstacle
+        function createObstacle() {
+            const size = 20 + Math.random() * 30;
+            obstacles.push({
+                x: canvas.width,
+                y: Math.random() * canvas.height,
+                radius: size,
+                speed: 3 + Math.random() * 2
+            });
+        }
+
+        // Créer un bonus
+        function createBonus() {
+            bonuses.push({
+                x: canvas.width,
+                y: Math.random() * canvas.height,
+                radius: 10,
+                speed: 2
+            });
+        }
+
+        // Créer des particules
+        function createParticles(x, y, count = 10, color = 'yellow') {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const velocity = 1 + Math.random() * 3;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * velocity,
+                    vy: Math.sin(angle) * velocity,
+                    size: Math.random() * 3 + 2,
+                    color: color,
+                    life: 20
+                });
+            }
+        }
+
+        // Déplacer le joueur avec la souris
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameOver) return;
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, mouseX));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, mouseY));
+        });
+
+        // Support tactile pour mobile
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameOver) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, touchX));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, touchY));
+        });
+
+        // Dessiner le joueur
+        function drawPlayer() {
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'white';
+            ctx.fill();
+            ctx.strokeStyle = 'yellow';
+            ctx.stroke();
+        }
+
+        // Dessiner les obstacles
+        function drawObstacles() {
+            obstacles.forEach(o => {
+                ctx.beginPath();
+                ctx.arc(o.x, o.y, o.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'gray';
+                ctx.fill();
+            });
+        }
+
+        // Dessiner les bonus
+        function drawBonuses() {
+            bonuses.forEach(b => {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'gold';
+                ctx.fill();
+            });
+        }
+
+        // Dessiner les particules
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 20;
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+        }
+
+        // Mettre à jour le jeu
+        function update() {
+            if (gameOver) {
+                document.getElementById('gameOver').style.display = 'block';
+                return;
+            }
+
+            // Mettre à jour le score
+            score += 1 / 60; // 1 point par seconde
+            document.getElementById('score').textContent = Math.floor(score);
+
+            // Générer des obstacles
+            const now = Date.now();
+            if (now - lastObstacleSpawn > obstacleSpawnDelay) {
+                createObstacle();
+                if (Math.random() < 0.3) createBonus(); // 30% de chance pour un bonus
+                lastObstacleSpawn = now;
+                obstacleSpawnDelay = Math.max(minSpawnDelay, obstacleSpawnDelay - spawnDelayDecrease);
+            }
+
+            // Mettre à jour les obstacles
+            obstacles.forEach(o => {
+                o.x -= o.speed;
+            });
+            obstacles = obstacles.filter(o => o.x + o.radius > 0);
+
+            // Mettre à jour les bonus
+            bonuses.forEach(b => {
+                b.x -= b.speed;
+            });
+            bonuses = bonuses.filter(b => b.x + b.radius > 0);
+
+            // Mettre à jour les particules
+            particles.forEach(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 1;
+                p.size *= 0.95;
+            });
+            particles = particles.filter(p => p.life > 0);
+
+            // Vérifier les collisions
+            obstacles.forEach(o => {
+                const dx = player.x - o.x;
+                const dy = player.y - o.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < player.radius + o.radius) {
+                    gameOver = true;
+                    createParticles(player.x, player.y, 20, 'white');
+                    document.getElementById('finalScore').textContent = Math.floor(score);
+                }
+            });
+
+            bonuses.forEach((b, index) => {
+                const dx = player.x - b.x;
+                const dy = player.y - b.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < player.radius + b.radius) {
+                    score += 10;
+                    createParticles(b.x, b.y, 15, 'gold');
+                    bonuses.splice(index, 1);
+                }
+            });
+        }
+
+        // Dessiner tout
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Fond étoilé
+            ctx.fillStyle = '#0f0f23';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            for (let i = 0; i < 50; i++) {
+                ctx.beginPath();
+                ctx.arc(Math.random() * canvas.width, Math.random() * canvas.height, 1, 0, Math.PI * 2);
+                ctx.fillStyle = 'white';
+                ctx.fill();
+            }
+            drawParticles();
+            drawObstacles();
+            drawBonuses();
+            drawPlayer();
+        }
+
+        // Partager le score
+        function shareScore() {
+            const text = `J'ai survécu avec ${Math.floor(score)} points sur Star Dash ! Peux-tu faire mieux ? Joue ici : [URL_DU_JEU] #StarDash`;
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Star Dash',
+                    text: text,
+                    url: window.location.href
+                });
+            } else {
+                alert('Partage ton score : ' + text);
+            }
+        }
+
+        // Redémarrer le jeu
+        function restartGame() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            obstacles = [];
+            bonuses = [];
+            particles = [];
+            score = 0;
+            gameOver = false;
+            lastObstacleSpawn = 0;
+            obstacleSpawnDelay = 1000;
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('score').textContent = 0;
+        }
+
+        // Boucle de jeu
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Lancer le jeu
+        gameLoop();
+    </script>
+</body>
+</html>
